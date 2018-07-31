@@ -34,6 +34,8 @@
 #include "text.h"
 #include "conf.h"
 
+#include <sys/socket.h>
+
 /*
  * Bind the given socket to the supplied address.  The socket is
  * returned if the bind succeeded.  Otherwise, -1 is returned
@@ -46,6 +48,13 @@ bind_socket (int sockfd, const char *addr, int family)
 
         assert (sockfd >= 0);
         assert (addr != NULL && strlen (addr) != 0);
+
+        if (addr[0] == '%') {
+                if (setsockopt (sockfd, SOL_SOCKET, SO_BINDTODEVICE, addr + 1, strlen(addr) - 1))
+                        return -1;
+
+                return 0;
+        }
 
         memset (&hints, 0, sizeof (struct addrinfo));
         hints.ai_family = family;

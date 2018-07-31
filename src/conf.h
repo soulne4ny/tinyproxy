@@ -69,6 +69,7 @@ struct config_s {
         char *pidpath;
         unsigned int idletimeout;
         char *bind_address;
+        char *bind_if;
         unsigned int bindsame;
 
         /*
