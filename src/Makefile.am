@@ -31,6 +31,7 @@ tinyproxy_SOURCES = \
 	child.c child.h \
 	common.h \
 	conf.c conf.h \
+	iface.c iface.h \
 	conns.c conns.h \
 	daemon.c daemon.h \
 	hashmap.c hashmap.h \

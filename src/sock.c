@@ -34,38 +34,89 @@
 #include "text.h"
 #include "conf.h"
 
+#include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/ip.h>
+#include <net/if.h>
+
 /*
  * Bind the given socket to the supplied address.  The socket is
  * returned if the bind succeeded.  Otherwise, -1 is returned
  * to indicate an error.
  */
-static int
-bind_socket (int sockfd, const char *addr, int family)
+static int bind_socket (int sockfd, const char *addr, int family)
 {
-        struct addrinfo hints, *res, *ressave;
+        struct sockaddr *sa;
+        struct sockaddr_in si;
+        struct sockaddr_in6 si6;
+        socklen_t sa_len;
+        char ipstr[INET6_ADDRSTRLEN];
+        char *p;
+        int l = strlen (addr);
+        int yes;
 
         assert (sockfd >= 0);
         assert (addr != NULL && strlen (addr) != 0);
 
-        memset (&hints, 0, sizeof (struct addrinfo));
-        hints.ai_family = family;
-        hints.ai_socktype = SOCK_STREAM;
+        log_message (LOG_INFO, "bind_socket: %s ...", addr);
 
-        /* The local port it not important */
-        if (getaddrinfo (addr, NULL, &hints, &res) != 0)
+        p = strchr (addr, '%');
+
+        if (p && p[1]) {
+                log_message (LOG_INFO, "bind_socket: dev %s ...", p + 1);
+                sa_len = l - (p - addr + 1);
+                if (setsockopt
+                    (sockfd, SOL_SOCKET, SO_BINDTODEVICE, p + 1, sa_len))
+                        return -1;
+        }
+
+        if (p) {
+                memcpy (ipstr, addr, p - addr);
+                ipstr[p - addr] = '\0';
+                addr = ipstr;
+        }
+
+        log_message (LOG_INFO, "bind_socket: addr %s ...", addr);
+
+        if (family == AF_INET) {
+                if (inet_pton (family, addr, &si.sin_addr) == 0)
+                        return -1;
+                si.sin_port = htons (54321);
+                si.sin_family = AF_INET;
+                sa = (struct sockaddr *) &si;
+                sa_len = sizeof si;
+        } else if (family == AF_INET6) {
+                if (inet_pton (family, addr, &si6.sin6_addr) == 0)
+                        return -1;
+                si6.sin6_port = htons (54321);
+                si6.sin6_family = AF_INET6;
+                sa = (struct sockaddr *) &si6;
+                sa_len = sizeof si6;
+        } else {
+                log_message (LOG_ERR,
+                             "bind_socket: unsupported family %d ...", family);
+                return -1;
+        }
+
+        yes = 1;
+        if (setsockopt (sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof (yes)))
                 return -1;
 
-        ressave = res;
-
-        /* Loop through the addresses and try to bind to each */
-        do {
-                if (bind (sockfd, res->ai_addr, res->ai_addrlen) == 0)
-                        break;  /* success */
-        } while ((res = res->ai_next) != NULL);
-
-        freeaddrinfo (ressave);
-        if (res == NULL)        /* was not able to bind to any address */
+        if (setsockopt
+            (sockfd, IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, &yes, sizeof yes))
                 return -1;
+
+        log_message (LOG_INFO,
+                     "bind_socket: bind %s ...",
+                     inet_ntop (sa->sa_family, &sa->sa_data, ipstr,
+                                sizeof (ipstr))
+            );
+
+        if (bind (sockfd, sa, sa_len) == -1)
+                return -1;
+
+        log_message (LOG_INFO, "bind_socket: bind ok");
 
         return sockfd;
 }
@@ -80,12 +131,13 @@ int opensock (const char *host, int port, const char *bind_to)
         int sockfd, n;
         struct addrinfo hints, *res, *ressave;
         char portstr[6];
+        char addrstr[128];
 
         assert (host != NULL);
         assert (port > 0);
 
-        log_message(LOG_INFO,
-                    "opensock: opening connection to %s:%d", host, port);
+        log_message (LOG_INFO,
+                     "opensock: opening connection to %s:%d", host, port);
 
         memset (&hints, 0, sizeof (struct addrinfo));
         hints.ai_family = AF_UNSPEC;
@@ -100,8 +152,8 @@ int opensock (const char *host, int port, const char *bind_to)
                 return -1;
         }
 
-        log_message(LOG_INFO,
-                    "opensock: getaddrinfo returned for %s:%d", host, port);
+        log_message (LOG_INFO,
+                     "opensock: getaddrinfo returned for %s:%d", host, port);
 
         ressave = res;
         do {
@@ -112,8 +164,7 @@ int opensock (const char *host, int port, const char *bind_to)
 
                 /* Bind to the specified address */
                 if (bind_to) {
-                        if (bind_socket (sockfd, bind_to,
-                                         res->ai_family) < 0) {
+                        if (bind_socket (sockfd, bind_to, res->ai_family) < 0) {
                                 close (sockfd);
                                 continue;       /* can't bind, so try again */
                         }
@@ -125,8 +176,15 @@ int opensock (const char *host, int port, const char *bind_to)
                         }
                 }
 
+                inet_ntop (res->ai_family, res->ai_addr, addrstr,
+                           sizeof (addrstr));
+                log_message (LOG_INFO, "opensock: connect()ing to %s", addrstr);
+
                 if (connect (sockfd, res->ai_addr, res->ai_addrlen) == 0)
                         break;  /* success */
+
+                log_message (LOG_ERR, "opensock: connect: %s",
+                             strerror (errno));
 
                 close (sockfd);
         } while ((res = res->ai_next) != NULL);
@@ -138,6 +196,8 @@ int opensock (const char *host, int port, const char *bind_to)
                              host);
                 return -1;
         }
+
+        log_message (LOG_INFO, "opensock: done");
 
         return sockfd;
 }

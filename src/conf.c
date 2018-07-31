@@ -37,6 +37,7 @@
 #include "upstream.h"
 #include "connect-ports.h"
 #include "basicauth.h"
+#include "iface.h"
 
 /*
  * The configuration directives are defined in the structure below.  Each
@@ -74,6 +75,8 @@
         "((([0-9a-f]{1,4}:){1,5}|:):(25[0-5]|2[0-4]\\d|[0-1]?\\d?\\d)(\\.(25[0-5]|2[0-4]\\d|[0-1]?\\d?\\d)){3})|" \
         "(:(:[0-9a-f]{1,4}){1,5}:(25[0-5]|2[0-4]\\d|[0-1]?\\d?\\d)(\\.(25[0-5]|2[0-4]\\d|[0-1]?\\d?\\d)){3})" \
         ")"
+
+#define IFACE "([a-z]{2,4}-?[0-9a-f]+)"
 
 #define IPV6MASK "(" IPV6 "(/[[:digit:]]+)?)"
 #define BEGIN "^[[:space:]]*"
@@ -120,6 +123,8 @@ static HANDLE_FUNC (handle_allow);
 static HANDLE_FUNC (handle_basicauth);
 static HANDLE_FUNC (handle_anonymous);
 static HANDLE_FUNC (handle_bind);
+static HANDLE_FUNC (handle_bindif);
+static HANDLE_FUNC (handle_bindif6);
 static HANDLE_FUNC (handle_bindsame);
 static HANDLE_FUNC (handle_connectport);
 static HANDLE_FUNC (handle_defaulterrorfile);
@@ -232,6 +237,8 @@ struct {
                  handle_deny),
         STDCONF ("bind", "(" IP "|" IPV6 ")", handle_bind),
         /* other */
+        STDCONF ("bindif", "(" IFACE ")", handle_bindif),
+        STDCONF ("bindif6", "(" IFACE ")", handle_bindif6),
         STDCONF ("basicauth", ALNUM WS ALNUM, handle_basicauth),
         STDCONF ("errorfile", INT WS STR, handle_errorfile),
         STDCONF ("addheader",  STR WS STR, handle_addheader),
@@ -307,6 +314,8 @@ static void free_config (struct config_s *conf)
 #endif                          /* UPSTREAM_SUPPORT */
         safefree (conf->pidpath);
         safefree (conf->bind_address);
+        safefree (conf->bind_if);
+        safefree (conf->bind_if6);
         safefree (conf->via_proxy_name);
         hashmap_delete (conf->errorpages);
         free_added_headers (conf->add_headers);
@@ -882,6 +891,53 @@ static HANDLE_FUNC (handle_bind)
                 return r;
         log_message (LOG_INFO,
                      "Outgoing connections bound to IP %s", conf->bind_address);
+        return 0;
+}
+
+static HANDLE_FUNC (handle_bindif)
+{
+        int r;
+
+        if (conf->bind_address)
+                return 0;
+
+        r = set_string_arg (&conf->bind_if, line, &match[2]);
+
+        if (r)
+                return r;
+
+        conf->bind_address = iface_address (conf->bind_if, AF_INET, 0);
+
+        if (!conf->bind_address)
+                return -1;
+
+        log_message (LOG_INFO,
+                     "Outgoing connections bound to interface %s IP %s",
+                     conf->bind_if, conf->bind_address);
+        return 0;
+}
+
+static HANDLE_FUNC (handle_bindif6)
+{
+        int r;
+
+        if (conf->bind_address)
+                return 0;
+
+        r = set_string_arg (&conf->bind_if6, line, &match[2]);
+
+        if (r)
+                return r;
+
+        conf->bind_address =
+            iface_address (conf->bind_if6, AF_INET6, IPV6_SCOPE_GLOBAL);
+
+        if (!conf->bind_address)
+                return -1;
+
+        log_message (LOG_INFO,
+                     "Outgoing connections bound to interface %s IP %s",
+                     conf->bind_if6, conf->bind_address);
         return 0;
 }
 
